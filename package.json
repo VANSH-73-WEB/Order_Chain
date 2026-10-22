@@ -1,0 +1,18 @@
+{
+  "name": "orderchain",
+  "version": "1.0.0",
+  "description": "OrderChain - a fully onchain limit order book DEX (Hack in Hills 26, Track 02: Onchain Finance & Trading)",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy": "hardhat run scripts/deploy.js --network localhost",
+    "demo": "hardhat run scripts/demo.js --network localhost",
+    "frontend": "npx http-server frontend -p 3000 -c-1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "ethers": "^6.13.0",
+    "hardhat": "^2.22.0"
+  }
+}

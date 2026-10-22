@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OrderChain</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script src="config.js"></script>
+<style>
+:root{--bg:#e9eef0;--panel:#f7f9fa;--ink:#16252e;--mute:#62757f;--bid:#0b7a66;--ask:#b23c2a;--line:#c9d4d9;--acc:#16252e}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3",system-ui,sans-serif}
+header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;border-bottom:1px solid var(--line)}
+h1{font:700 26px "Bricolage Grotesque",sans-serif;margin:0;letter-spacing:-.5px}h2{font:500 17px "Bricolage Grotesque",sans-serif;margin:0 0 10px}
+main{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;padding:16px 24px;max-width:1100px;margin:auto}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px}
+button{font:600 15px inherit;font-family:inherit;background:var(--acc);color:#fff;border:0;border-radius:4px;padding:8px 14px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}button:focus-visible,input:focus-visible{outline:2px solid var(--bid);outline-offset:2px}
+input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:4px;width:100%;background:#fff}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}td,th{padding:4px 6px;text-align:right;font-weight:400}th{color:var(--mute);font-size:14px}td:first-child,th:first-child{text-align:left}
+.bid{color:var(--bid)}.ask{color:var(--ask)}.row{display:flex;gap:8px;margin:8px 0}.mid{text-align:center;padding:6px;color:var(--mute);border-block:1px solid var(--line);margin:6px 0}
+#msg{color:var(--mute);min-height:24px;padding:0 24px;max-width:1100px;margin:8px auto 0}.stack{display:grid;gap:16px}.x{cursor:pointer;color:var(--mute);border:0;background:none;padding:0 4px}
+</style></head><body>
+<header><h1>OrderChain</h1><div><span id="acct" style="color:var(--mute);margin-right:12px"></span><button id="connect">Connect wallet</button></div></header>
+<div id="msg">Start the local chain, deploy, then connect MetaMask (see README).</div>
+<main>
+ <section><h2>Order book (WETH / USDC)</h2>
+  <table><thead><tr><th>Price (USDC)</th><th>Size (WETH)</th><th></th></tr></thead><tbody id="asks"></tbody></table>
+  <div class="mid" id="spread">No orders yet</div>
+  <table><tbody id="bids"></tbody></table>
+  <h2 style="margin-top:18px">Recent trades</h2><table><tbody id="trades"></tbody></table></section>
+ <div class="stack">
+  <section><h2>Your balances in the book</h2>
+   <table><tr><td>WETH</td><td id="bBase">-</td></tr><tr><td>USDC</td><td id="bQuote">-</td></tr><tr><td>In wallet</td><td id="wal">-</td></tr></table>
+   <div class="row"><button class="ghost" id="faucet">Get test tokens</button><button class="ghost" id="dep">Deposit all</button><button class="ghost" id="wd">Withdraw all</button></div></section>
+  <section><h2>Place limit order</h2>
+   <div class="row"><input id="price" placeholder="Price in USDC, e.g. 2000"><input id="amt" placeholder="Size in WETH, e.g. 0.5"></div>
+   <div class="row"><button id="buy" style="background:var(--bid)">Buy WETH</button><button id="sell" style="background:var(--ask)">Sell WETH</button></div>
+   <p style="color:var(--mute);font-size:14px;margin:4px 0 0">Orders that cross the book fill instantly at the resting price, in the same transaction.</p></section>
+ </div>
+</main>
+<script>
+const ABI=["function deposit(bool,uint256)","function withdraw(bool,uint256)","function placeLimitOrder(bool,uint256,uint256) returns (uint256)","function cancelOrder(uint256)",
+"function getBook(uint256) view returns (tuple(uint256 id,address trader,uint256 price,uint256 amount)[] bids,tuple(uint256 id,address trader,uint256 price,uint256 amount)[] asks)",
+"function baseBalance(address) view returns (uint256)","function quoteBalance(address) view returns (uint256)",
+"event Trade(uint256 indexed makerId,address indexed taker,address indexed maker,bool takerIsBuy,uint256 price,uint256 amount)"];
+const TABI=["function mint(address,uint256)","function approve(address,uint256)","function balanceOf(address) view returns (uint256)"];
+const $=id=>document.getElementById(id),f=(v,d=2)=>Number(ethers.formatEther(v)).toLocaleString(undefined,{maximumFractionDigits:d});
+let ob,base,quote,me;
+const say=t=>$("msg").textContent=t;
+async function run(label,fn){try{say(label+"...");await(await fn()).wait();say(label+" done.");refresh()}catch(e){say(e.shortMessage||e.message)}}
+$("connect").onclick=async()=>{
+ if(!window.CONFIG)return say("config.js is empty - run: npm run deploy");
+ if(!window.ethereum)return say("Install MetaMask (or another wallet) first.");
+ const p=new ethers.BrowserProvider(window.ethereum);await p.send("eth_requestAccounts",[]);
+ const n=await p.getNetwork();if(Number(n.chainId)!==CONFIG.chainId)return say("Switch your wallet to chain id "+CONFIG.chainId+" (localhost: http://127.0.0.1:8545).");
+ const s=await p.getSigner();me=await s.getAddress();
+ ob=new ethers.Contract(CONFIG.orderBook,ABI,s);base=new ethers.Contract(CONFIG.base,TABI,s);quote=new ethers.Contract(CONFIG.quote,TABI,s);
+ $("acct").textContent=me.slice(0,6)+"..."+me.slice(-4);$("connect").hidden=true;say("Connected.");refresh();setInterval(refresh,4000)};
+$("faucet").onclick=()=>run("Minting 10 WETH and 50,000 USDC",async()=>{await(await base.mint(me,ethers.parseEther("10"))).wait();return quote.mint(me,ethers.parseEther("50000"))});
+$("dep").onclick=()=>run("Depositing",async()=>{const b=await base.balanceOf(me),q=await quote.balanceOf(me);
+ await(await base.approve(CONFIG.orderBook,b)).wait();await(await quote.approve(CONFIG.orderBook,q)).wait();await(await ob.deposit(true,b)).wait();return ob.deposit(false,q)});
+$("wd").onclick=()=>run("Withdrawing",async()=>{const b=await ob.baseBalance(me),q=await ob.quoteBalance(me);await(await ob.withdraw(true,b)).wait();return ob.withdraw(false,q)});
+const order=isBuy=>()=>{const p=ethers.parseEther($("price").value||"0"),a=ethers.parseEther($("amt").value||"0");run(isBuy?"Buying":"Selling",()=>ob.placeLimitOrder(isBuy,p,a))};
+$("buy").onclick=order(true);$("sell").onclick=order(false);
+const cancel=id=>run("Cancelling",()=>ob.cancelOrder(id));
+const rows=(list,cls)=>list.map(o=>`<tr><td class="${cls}">${f(o.price)}</td><td>${f(o.amount,4)}</td><td>${o.trader.toLowerCase()===me.toLowerCase()?`<button class="x" title="Cancel order" onclick="cancel(${o.id})">cancel</button>`:""}</td></tr>`).join("");
+async function refresh(){
+ const [bids,asks]=await ob.getBook(10);
+ $("asks").innerHTML=rows([...asks].reverse(),"ask");$("bids").innerHTML=rows(bids,"bid");
+ $("spread").textContent=bids.length&&asks.length?"Spread "+f(asks[0].price-bids[0].price)+" USDC":"Waiting for both sides";
+ $("bBase").textContent=f(await ob.baseBalance(me),4);$("bQuote").textContent=f(await ob.quoteBalance(me));
+ $("wal").textContent=f(await base.balanceOf(me),4)+" WETH / "+f(await quote.balanceOf(me))+" USDC";
+  const latest=await ob.runner.provider.getBlockNumber();
+ const ev=(await ob.queryFilter(ob.filters.Trade(),Math.max(0,latest-2000))).slice(-8).reverse();
+ $("trades").innerHTML=ev.map(t=>`<tr><td class="${t.args.takerIsBuy?"bid":"ask"}">${f(t.args.price)}</td><td>${f(t.args.amount,4)}</td><td>${t.args.takerIsBuy?"buy":"sell"}</td></tr>`).join("")||"<tr><td>No trades yet</td></tr>"}
+</script></body></html>
